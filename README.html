@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
+    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.0/dist/ffmpeg.min.js"></script>
+
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mapa Animado</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v7.3.0/ol.css">
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+        }
+        #map {
+            height: 500px;
+            width: 100%;
+        }
+        #controls {
+            padding: 10px;
+            background: #222;
+            text-align: center;
+            color: white;
+        }
+        button {
+            margin: 5px;
+            padding: 10px;
+            font-size: 16px;
+            background: #444;
+            color: white;
+            border: none;
+            cursor: pointer;
+            border-radius: 5px;
+        }
+        button:hover {
+            background: #666;
+        }
+        #timeline-container {
+            padding: 10px;
+            background: #333;
+            position: relative;
+            color: white;
+        }
+        #timeline {
+            width: 100%;
+        }
+        #countryInput {
+            padding: 5px;
+            font-size: 16px;
+            margin: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <input type="color" id="geojsonColorPicker" value="#FF0000" onchange="updateGeoJSONColor()">
+        <input type="number" id="startTime" placeholder="Início (s)">
+        <input type="number" id="endTime" placeholder="Fim (s)">
+        <button onclick="startLineAnimation()">Animar Linha</button>
+
+        <input type="file" id="geojsonFile" accept=".geojson">
+        <button onclick="loadGeoJSON()">Carregar GeoJSON</button>
+        <button onclick="addKeyframe()">Adicionar Keyframe</button>
+        <button onclick="startAnimation()">Iniciar Animação</button>
+        <button onclick="exportVideo()">Exportar Vídeo</button>
+        <button onclick="startDrawing('Polygon')">Desenhar Polígono</button>
+        <button onclick="startDrawing('LineString')">Desenhar Linha/Curva</button>
+        <button onclick="startDrawing('StraightLine')">Desenhar Linha Reta</button> <!-- Novo botão -->
+        <button onclick="clearDrawings()">Apagar Desenhos</button>
+        <button onclick="enableLabelMode()">Adicionar Texto</button>
+        <input type="text" id="countryInput" list="countryList" placeholder="Nome do país">
+        <datalist id="countryList"></datalist>
+        <button onclick="addCountry()">Adicionar País</button>
+    </div>
+    <div id="map"></div>
+    <div id="timeline-container">
+        <input type="range" id="timeline" min="0" max="30" value="0">
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/ol@v7.3.0/dist/ol.js"></script>
+    <script>
+        // Lista de países em inglês
+        const countries = [
+            "Afghanistan", "Albania", "Algeria", "Andorra", "Angola", "Antigua and Barbuda", "Argentina", "Armenia", "Australia", "Austria",
+            "Azerbaijan", "Bahamas", "Bahrain", "Bangladesh", "Barbados", "Belarus", "Belgium", "Belize", "Benin", "Bhutan", "Bolivia",
+            "Bosnia and Herzegovina", "Botswana", "Brazil", "Brunei", "Bulgaria", "Burkina Faso", "Burundi", "Côte d'Ivoire", "Cabo Verde",
+            "Cambodia", "Cameroon", "Canada", "Central African Republic", "Chad", "Chile", "China", "Colombia", "Comoros", "Congo (Congo-Brazzaville)",
+            "Costa Rica", "Croatia", "Cuba", "Cyprus", "Czechia (Czech Republic)", "Democratic Republic of the Congo", "Denmark", "Djibouti",
+            "Dominica", "Dominican Republic", "Ecuador", "Egypt", "El Salvador", "Equatorial Guinea", "Eritrea", "Estonia", "Eswatini (fmr. Swaziland)",
+            "Ethiopia", "Fiji", "Finland", "France", "Gabon", "Gambia", "Georgia", "Germany", "Ghana", "Greece", "Grenada", "Guatemala", "Guinea",
+            "Guinea-Bissau", "Guyana", "Haiti", "Holy See", "Honduras", "Hungary", "Iceland", "India", "Indonesia", "Iran", "Iraq", "Ireland",
+            "Israel", "Italy", "Jamaica", "Japan", "Jordan", "Kazakhstan", "Kenya", "Kiribati", "Kuwait", "Kyrgyzstan", "Laos", "Latvia", "Lebanon",
+            "Lesotho", "Liberia", "Libya", "Liechtenstein", "Lithuania", "Luxembourg", "Madagascar", "Malawi", "Malaysia", "Maldives", "Mali",
+            "Malta", "Marshall Islands", "Mauritania", "Mauritius", "Mexico", "Micronesia", "Moldova", "Monaco", "Mongolia", "Montenegro", "Morocco",
+            "Mozambique", "Myanmar (formerly Burma)", "Namibia", "Nauru", "Nepal", "Netherlands", "New Zealand", "Nicaragua", "Niger", "Nigeria",
+            "North Korea", "North Macedonia", "Norway", "Oman", "Pakistan", "Palau", "Palestine State", "Panama", "Papua New Guinea", "Paraguay",
+            "Peru", "Philippines", "Poland", "Portugal", "Qatar", "Romania", "Russia", "Rwanda", "Saint Kitts and Nevis", "Saint Lucia",
+            "Saint Vincent and the Grenadines", "Samoa", "San Marino", "Sao Tome and Principe", "Saudi Arabia", "Senegal", "Serbia", "Seychelles",
+            "Sierra Leone", "Singapore", "Slovakia", "Slovenia", "Solomon Islands", "Somalia", "South Africa", "South Korea", "South Sudan", "Spain",
+            "Sri Lanka", "Sudan", "Suriname", "Sweden", "Switzerland", "Syria", "Tajikistan", "Tanzania", "Thailand", "Timor-Leste", "Togo", "Tonga",
+            "Trinidad and Tobago", "Tunisia", "Turkey", "Turkmenistan", "Tuvalu", "Uganda", "Ukraine", "United Arab Emirates", "United Kingdom",
+            "United States of America", "Uruguay", "Uzbekistan", "Vanuatu", "Venezuela", "Vietnam", "Yemen", "Zambia", "Zimbabwe"
+        ];
+
+        // Preenche o datalist com os países
+        const countryList = document.getElementById('countryList');
+        countries.forEach(country => {
+            const option = document.createElement('option');
+            option.value = country;
+            countryList.appendChild(option);
+        });
+
+        // Função para atualizar a cor do GeoJSON
+        function updateGeoJSONColor() {
+            const selectedColor = document.getElementById('geojsonColorPicker').value;
+            if (vectorLayer) {
+                vectorLayer.getSource().getFeatures().forEach(feature => {
+                    feature.setStyle(new ol.style.Style({
+                        stroke: new ol.style.Stroke({ color: selectedColor, width: 2 }),
+                        fill: new ol.style.Fill({ color: selectedColor + '50' }),
+                        image: new ol.style.Circle({
+                            radius: 5,
+                            fill: new ol.style.Fill({ color: selectedColor })
+                        })
+                    }));
+                });
+            }
+        }
+
+        // Configuração do mapa com camada de satélite (Esri World Imagery)
+        const map = new ol.Map({
+            target: 'map',
+            layers: [
+                new ol.layer.Tile({
+                    source: new ol.source.XYZ({
+                        url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+                        attributions: 'Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community'
+                    })
+                })
+            ],
+            view: new ol.View({
+                center: ol.proj.fromLonLat([-54, -14]),
+                zoom: 4
+            })
+        });
+
+        let drawnLines = []; // Armazena as linhas desenhadas
+        let keyframes = [];
+        let vectorLayer;
+        let drawLayer = new ol.layer.Vector({
+            source: new ol.source.Vector()
+        });
+        map.addLayer(drawLayer);
+        let draw;
+        let labelMode = false;
+        let straightLineMode = false; // Modo de desenho de linha reta
+        let startPoint = null; // Ponto inicial da linha reta
+
+        // Função para carregar GeoJSON
+        function loadGeoJSON() {
+            const fileInput = document.getElementById('geojsonFile');
+            const file = fileInput.files[0];
+            if (!file) {
+                alert('Selecione um arquivo GeoJSON!');
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const geojson = JSON.parse(e.target.result);
+                const vectorSource = new ol.source.Vector({
+                    features: new ol.format.GeoJSON().readFeatures(geojson, {
+                        dataProjection: 'EPSG:4326',
+                        featureProjection: 'EPSG:3857'
+                    })
+                });
+
+                if (vectorLayer) {
+                    map.removeLayer(vectorLayer);
+                }
+
+                vectorLayer = new ol.layer.Vector({
+                    source: vectorSource,
+                    style: new ol.style.Style({
+                        stroke: new ol.style.Stroke({ color: '#FF0000', width: 2 }),
+                        fill: new ol.style.Fill({ color: 'rgba(255, 0, 0, 0.3)' }),
+                        image: new ol.style.Circle({
+                            radius: 5,
+                            fill: new ol.style.Fill({ color: '#FF0000' })
+                        })
+                    })
+                });
+                map.addLayer(vectorLayer);
+
+                const extent = vectorSource.getExtent();
+                if (!ol.extent.isEmpty(extent)) {
+                    map.getView().fit(extent, { padding: [50, 50, 50, 50] });
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        // Função para adicionar keyframes
+        function addKeyframe() {
+            const view = map.getView();
+            const center = ol.proj.toLonLat(view.getCenter());
+            const zoom = view.getZoom();
+            const time = parseFloat(timeline.value);
+            keyframes.push({ center, zoom, time });
+            keyframes.sort((a, b) => a.time - b.time);
+            alert(`Keyframe adicionado: ${center[0]}, ${center[1]}, Zoom: ${zoom}, Tempo: ${time}s`);
+        }
+
+        // Função para iniciar a animação da câmera
+        async function startAnimation() {
+            if (keyframes.length < 2) {
+                alert('Adicione pelo menos 2 keyframes para animar.');
+                return;
+            }
+            timeline.value = keyframes[0].time; // Define a timeline para o primeiro keyframe
+            map.getView().setCenter(ol.proj.fromLonLat(keyframes[0].center));
+            map.getView().setZoom(keyframes[0].zoom);
+
+            for (let i = 0; i < keyframes.length - 1; i++) {
+                const kf1 = keyframes[i];
+                const kf2 = keyframes[i + 1];
+
+                await animateCamera(kf1, kf2);
+            }
+        }
+
+        // Função para animar a câmera entre keyframes
+        function animateCamera(start, end) {
+            return new Promise(resolve => {
+                const duration = (end.time - start.time) * 1000;
+                const timeline = document.getElementById("timeline");
+
+                // Atualiza a timeline enquanto a animação acontece
+                const startTime = Date.now();
+                const interval = setInterval(() => {
+                    const elapsed = Date.now() - startTime;
+                    const progress = elapsed / duration;
+                    timeline.value = start.time + progress * (end.time - start.time);
+
+                    if (progress >= 1) {
+                        clearInterval(interval);
+                    }
+                }, 100); // Atualiza a cada 100ms
+
+                // Anima a câmera
+                map.getView().animate({
+                    center: ol.proj.fromLonLat(end.center),
+                    zoom: end.zoom,
+                    duration: duration,
+                    easing: ol.easing.easeInOut
+                });
+
+                setTimeout(() => {
+                    clearInterval(interval);
+                    timeline.value = end.time; // Garante que termina no tempo certo
+                    resolve();
+                }, duration);
+            });
+        }
+
+        // Função para iniciar o desenho de polígonos ou linhas
+        function startDrawing(type) {
+            if (draw) {
+                map.removeInteraction(draw);
+            }
+
+            if (type === 'LineString') {
+                let coordinates = [];
+                let drawing = false;
+                let isDragging = false;
+
+                const pointerMove = new ol.interaction.Pointer({
+                    handleMoveEvent: function (event) {
+                        if (drawing && isDragging) {
+                            coordinates.push(event.coordinate);
+                            const feature = new ol.Feature(new ol.geom.LineString(coordinates));
+                            drawLayer.getSource().clear();
+                            drawLayer.getSource().addFeature(feature);
+                        }
+                    }
+                });
+
+                map.addInteraction(pointerMove);
+
+                map.on('pointerdown', function (event) {
+                    if (!drawing) {
+                        coordinates = [event.coordinate];
+                        drawing = true;
+                        isDragging = false;
+                    }
+                });
+
+                map.on('pointerdrag', function (event) {
+                    if (drawing) {
+                        isDragging = true;
+                        coordinates.push(event.coordinate);
+                        const feature = new ol.Feature(new ol.geom.LineString(coordinates));
+                        drawLayer.getSource().clear();
+                        drawLayer.getSource().addFeature(feature);
+                    }
+                });
+
+                map.on('pointerup', function (event) {
+                    if (drawing) {
+                        if (!isDragging) {
+                            // Clique simples: linha reta
+                            coordinates.push(event.coordinate);
+                            const feature = new ol.Feature(new ol.geom.LineString(coordinates));
+                            drawnLines.push(feature);
+                            drawLayer.getSource().addFeature(feature);
+                        } else {
+                            // Clique e arrasta: curva
+                            const feature = new ol.Feature(new ol.geom.LineString(coordinates));
+                            drawnLines.push(feature);
+                            drawLayer.getSource().addFeature(feature);
+                        }
+                        drawing = false;
+                        isDragging = false;
+                        map.removeInteraction(pointerMove);
+                    }
+                });
+            } else if (type === 'StraightLine') {
+                // Modo de desenho de linha reta
+                straightLineMode = true;
+                startPoint = null;
+
+                map.on('click', function (event) {
+                    if (!straightLineMode) return;
+
+                    if (!startPoint) {
+                        // Primeiro clique: define o ponto inicial
+                        startPoint = event.coordinate;
+                        alert('Clique no segundo ponto para finalizar a linha reta.');
+                    } else {
+                        // Segundo clique: define o ponto final e desenha a linha
+                        const endPoint = event.coordinate;
+                        const feature = new ol.Feature(new ol.geom.LineString([startPoint, endPoint]));
+                        feature.setStyle(new ol.style.Style({
+                            stroke: new ol.style.Stroke({ color: '#FF0000', width: 2 })
+                        }));
+                        drawLayer.getSource().addFeature(feature);
+                        drawnLines.push(feature);
+
+                        // Reseta o modo de desenho
+                        straightLineMode = false;
+                        startPoint = null;
+                    }
+                });
+            } else {
+                draw = new ol.interaction.Draw({
+                    source: drawLayer.getSource(),
+                    type: type
+                });
+
+                draw.on('drawend', function (event) {
+                    if (type === 'Polygon') {
+                        drawnLines.push(event.feature); // Salva o polígono desenhado na lista
+                    }
+                });
+
+                map.addInteraction(draw);
+            }
+        }
+
+        // Função para limpar desenhos
+        function clearDrawings() {
+            drawLayer.getSource().clear();
+        }
+
+        // Função para habilitar o modo de adicionar texto
+        function enableLabelMode() {
+            labelMode = true;
+            alert('Clique no mapa para adicionar um texto.');
+        }
+
+        // Adiciona texto ao mapa
+        map.on('click', function (event) {
+            if (!labelMode) return;
+            labelMode = false;
+
+            const text = prompt('Digite o texto:');
+            if (!text) return;
+
+            const feature = new ol.Feature({
+                geometry: new ol.geom.Point(event.coordinate)
+            });
+            feature.setStyle(new ol.style.Style({
+                text: new ol.style.Text({
+                    text: text,
+                    font: '14px Arial',
+                    fill: new ol.style.Fill({ color: 'white' }),
+                    stroke: new ol.style.Stroke({ color: 'black', width: 2 })
+                })
+            }));
+            drawLayer.getSource().addFeature(feature);
+        });
+
+        // Função para animar a linha
+        function animateLine(startTime, endTime) {
+            if (drawnLines.length === 0) {
+                alert("Nenhuma linha desenhada para animar.");
+                return;
+            }
+
+            drawnLines.forEach(lineFeature => {
+                const geometry = lineFeature.getGeometry();
+                const coordinates = geometry.getCoordinates();
+                const totalPoints = coordinates.length;
+
+                if (totalPoints < 2) {
+                    alert("A linha deve ter pelo menos dois pontos para ser animada.");
+                    return;
+                }
+
+                // Oculta a linha original
+                lineFeature.setStyle(null);
+
+                // Cria uma cópia da linha original para animação
+                const animatedFeature = new ol.Feature(new ol.geom.LineString([]));
+                animatedFeature.setStyle(new ol.style.Style({
+                    stroke: new ol.style.Stroke({ color: '#FF0000', width: 2 })
+                }));
+                drawLayer.getSource().addFeature(animatedFeature);
+
+                const duration = (endTime - startTime) * 1000; // Duração em milissegundos
+                const startTimestamp = Date.now();
+
+                function updateAnimation() {
+                    const elapsed = Date.now() - startTimestamp;
+                    const progress = Math.min(elapsed / duration, 1);
+
+                    // Calcula a posição atual ao longo da linha
+                    const totalLength = coordinates.length - 1;
+                    const currentPosition = progress * totalLength;
+
+                    // Encontra os pontos entre os quais estamos interpolando
+                    const startIndex = Math.floor(currentPosition);
+                    const endIndex = Math.min(startIndex + 1, totalLength);
+                    const fraction = currentPosition - startIndex;
+
+                    // Interpola as coordenadas
+                    const startCoord = coordinates[startIndex];
+                    const endCoord = coordinates[endIndex];
+                    const currentCoord = [
+                        startCoord[0] + fraction * (endCoord[0] - startCoord[0]),
+                        startCoord[1] + fraction * (endCoord[1] - startCoord[1])
+                    ];
+
+                    // Atualiza a linha com os pontos até a posição atual
+                    const lineCoords = coordinates.slice(0, startIndex + 1);
+                    lineCoords.push(currentCoord);
+                    animatedFeature.setGeometry(new ol.geom.LineString(lineCoords));
+
+                    // Força o redesenho do mapa
+                    map.updateSize();
+
+                    if (progress < 1) {
+                        requestAnimationFrame(updateAnimation);
+                    }
+                }
+
+                // Aguarda o tempo de início antes de iniciar a animação
+                setTimeout(() => {
+                    requestAnimationFrame(updateAnimation);
+                }, startTime * 1000);
+            });
+        }
+
+        // Função para iniciar a animação da linha
+        function startLineAnimation() {
+            const startTime = parseFloat(document.getElementById('startTime').value);
+            const endTime = parseFloat(document.getElementById('endTime').value);
+
+            if (isNaN(startTime) || isNaN(endTime) || startTime >= endTime) {
+                alert("Defina valores válidos para o tempo de início e fim.");
+                return;
+            }
+
+            animateLine(startTime, endTime);
+        }
+
+        // Função para adicionar um país ao mapa
+        function addCountry() {
+            const countryName = document.getElementById('countryInput').value.trim();
+            if (!countryName) {
+                alert("Digite o nome de um país.");
+                return;
+            }
+
+            // URL do GeoJSON dos países (exemplo usando um repositório público)
+            const url = `https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson`;
+
+            fetch(url)
+                .then(response => response.json())
+                .then(geojson => {
+                    const countryFeature = geojson.features.find(feature => 
+                        feature.properties.ADMIN.toLowerCase() === countryName.toLowerCase()
+                    );
+
+                    if (!countryFeature) {
+                        alert("País não encontrado.");
+                        return;
+                    }
+
+                    const vectorSource = new ol.source.Vector({
+                        features: new ol.format.GeoJSON().readFeatures(countryFeature, {
+                            dataProjection: 'EPSG:4326',
+                            featureProjection: 'EPSG:3857'
+                        })
+                    });
+
+                    if (vectorLayer) {
+                        map.removeLayer(vectorLayer);
+                    }
+
+                    vectorLayer = new ol.layer.Vector({
+                        source: vectorSource,
+                        style: new ol.style.Style({
+                            stroke: new ol.style.Stroke({ color: '#FF0000', width: 2 }),
+                            fill: new ol.style.Fill({ color: 'rgba(255, 0, 0, 0.3)' })
+                        })
+                    });
+                    map.addLayer(vectorLayer);
+
+                    const extent = vectorSource.getExtent();
+                    if (!ol.extent.isEmpty(extent)) {
+                        map.getView().fit(extent, { padding: [50, 50, 50, 50] });
+                    }
+                })
+                .catch(error => {
+                    console.error("Erro ao carregar o GeoJSON:", error);
+                    alert("Erro ao carregar o país. Verifique o nome e tente novamente.");
+                });
+        }
+
+        // Integração com a timeline
+        const timeline = document.getElementById('timeline');
+        timeline.addEventListener('input', function () {
+            const currentTime = parseFloat(timeline.value);
+            const startTime = parseFloat(document.getElementById('startTime').value);
+            const endTime = parseFloat(document.getElementById('endTime').value);
+
+            if (drawnLines.length === 0) return;
+
+            drawnLines.forEach(lineFeature => {
+                const geometry = lineFeature.getGeometry();
+                const coordinates = geometry.getCoordinates();
+                const totalPoints = coordinates.length;
+
+                // Calcula o progresso com base no tempo atual da timeline
+                const progress = (currentTime - startTime) / (endTime - startTime);
+                const currentPosition = progress * (totalPoints - 1);
+
+                // Encontra os pontos entre os quais estamos interpolando
+                const startIndex = Math.floor(currentPosition);
+                const endIndex = Math.min(startIndex + 1, totalPoints - 1);
+                const fraction = currentPosition - startIndex;
+
+                // Interpola as coordenadas
+                const startCoord = coordinates[startIndex];
+                const endCoord = coordinates[endIndex];
+                const currentCoord = [
+                    startCoord[0] + fraction * (endCoord[0] - startCoord[0]),
+                    startCoord[1] + fraction * (endCoord[1] - startCoord[1])
+                ];
+
+                // Atualiza a linha com os pontos até a posição atual
+                const lineCoords = coordinates.slice(0, startIndex + 1);
+                lineCoords.push(currentCoord);
+                const animatedFeature = new ol.Feature(new ol.geom.LineString(lineCoords));
+                animatedFeature.setStyle(new ol.style.Style({
+                    stroke: new ol.style.Stroke({ color: '#FF0000', width: 2 })
+                }));
+
+                // Remove a linha animada anterior e adiciona a nova
+                drawLayer.getSource().clear();
+                drawLayer.getSource().addFeature(animatedFeature);
+            });
+        });
+ 
+        async function exportVideo() {  // Certifique-se de que 'async' está aqui
+    const startTime = parseFloat(document.getElementById('startTime').value);
+    const endTime = parseFloat(document.getElementById('endTime').value);
+    if (isNaN(startTime) || isNaN(endTime) || startTime >= endTime) {
+        alert("Defina valores válidos para o tempo de início e fim.");
+        return;
+    }
+
+    const fps = 30;
+    const totalFrames = (endTime - startTime) * fps;
+
+    const mapElement = document.getElementById('map');
+    const originalSize = { width: mapElement.style.width, height: mapElement.style.height };
+    mapElement.style.width = '1920px';
+    mapElement.style.height = '1080px';
+    map.updateSize();
+
+    const frames = [];
+    for (let i = 0; i < totalFrames; i++) {
+        const currentTime = startTime + (i / fps);
+        document.getElementById('timeline').value = currentTime;
+        await new Promise(resolve => setTimeout(resolve, 1000 / fps));
+        const canvas = await html2canvas(mapElement, { scale: 1, logging: false, useCORS: true });
+        frames.push(canvas.toDataURL('image/png'));
+    }
+
+    mapElement.style.width = originalSize.width;
+    mapElement.style.height = originalSize.height;
+    map.updateSize();
+
+    await compileVideo(frames, fps);
+}
+async function compileVideo(frames, fps) {
+    const { createFFmpeg, fetchFile } = FFmpeg;
+    const ffmpeg = createFFmpeg({ log: true });
+    await ffmpeg.load();
+
+    for (let i = 0; i < frames.length; i++) {
+        const frameName = `frame_${i.toString().padStart(4, '0')}.png`;
+        ffmpeg.FS('writeFile', frameName, await fetchFile(frames[i]));
+    }
+
+    await ffmpeg.run('-framerate', fps.toString(), '-i', 'frame_%04d.png', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-s', '1920x1080', 'output.mp4');
+
+    const data = ffmpeg.FS('readFile', 'output.mp4');
+    const videoUrl = URL.createObjectURL(new Blob([data.buffer], { type: 'video/mp4' }));
+    const link = document.createElement('a');
+    link.href = videoUrl;
+    link.download = 'animation_1080p.mp4';
+    link.textContent = 'Download Vídeo';
+    document.body.appendChild(link);
+    link.click();
+}
+
+    </script>
+</body>
+</html>
