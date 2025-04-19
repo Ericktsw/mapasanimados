@@ -3422,8 +3422,7 @@ function createExportMap(width, height) {
                             exportVectorLayer.getSource().addFeature(fullIcon);
                         }
                     }
-              
-              });
+                });
             }
             
             // Função para exportar vídeo com html2canvas - com espera aumentada
@@ -4192,6 +4191,55 @@ function createExportMap(width, height) {
 
     if (progress) progress.style.display = 'none';
   }
+</script>
+
+
+<!-- Adiciona ffmpeg.wasm apenas se for Safari/Mac/iOS -->
+<script>
+    function isSafariOrIOS() {
+        const ua = navigator.userAgent;
+        return /Safari/.test(ua) && !/Chrome/.test(ua) || /iPhone|iPad|iPod/.test(ua);
+    }
+
+    if (isSafariOrIOS()) {
+        const ffmpegScript = document.createElement('script');
+        ffmpegScript.src = "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.6/dist/ffmpeg.min.js";
+        ffmpegScript.onload = () => console.log("FFmpeg wasm carregado para Safari/iOS");
+        document.head.appendChild(ffmpegScript);
+    }
+</script>
+
+<script>
+    async function exportarComFFmpeg(frames, fps = 24) {
+        if (!isSafariOrIOS()) return;
+
+        const { createFFmpeg, fetchFile } = FFmpeg;
+        const ffmpeg = createFFmpeg({ log: true });
+        await ffmpeg.load();
+
+        for (let i = 0; i < frames.length; i++) {
+            const imgBlob = await fetch(frames[i]).then(r => r.blob());
+            const imgBuffer = await imgBlob.arrayBuffer();
+            ffmpeg.FS('writeFile', `frame${i}.jpg`, new Uint8Array(imgBuffer));
+        }
+
+        await ffmpeg.run(
+            '-framerate', fps.toString(),
+            '-i', 'frame%d.jpg',
+            '-c:v', 'libx264',
+            '-pix_fmt', 'yuv420p',
+            'output.mp4'
+        );
+
+        const data = ffmpeg.FS('readFile', 'output.mp4');
+        const videoBlob = new Blob([data.buffer], { type: 'video/mp4' });
+        const url = URL.createObjectURL(videoBlob);
+
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'video.mp4';
+        a.click();
+    }
 </script>
 
 </body>
