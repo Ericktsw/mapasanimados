@@ -813,6 +813,7 @@
                                 <label for="video-format">Formato:</label>
                                 <select id="video-format">
                                     <option value="webm" selected>WebM</option>
+                                    <option value="mp4">MP4</option>
                                     <option value="gif">GIF</option>
                                     <option value="frames">Frames (ZIP)</option>
                                 </select>
@@ -1057,6 +1058,11 @@
     <!-- HTML2Canvas para exportação de vídeo -->
     <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
     
+    <!-- FFmpeg.wasm para exportação em MP4 -->
+    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js"></script>
+
+   
     <script>
         document.addEventListener('DOMContentLoaded', function() {
             // Detectar se é um dispositivo móvel
@@ -1071,6 +1077,9 @@
             
             // Verificar se JSZip está disponível
             console.log("JSZip disponível:", typeof JSZip !== 'undefined');
+            
+            // Verificar se FFmpeg está disponível
+            console.log("FFmpeg disponível:", typeof FFmpeg !== 'undefined');
             
             // Inicializando variáveis
             let currentTime = 0;
@@ -3422,7 +3431,8 @@ function createExportMap(width, height) {
                             exportVectorLayer.getSource().addFeature(fullIcon);
                         }
                     }
-                });
+              
+              });
             }
             
             // Função para exportar vídeo com html2canvas - com espera aumentada
@@ -3610,6 +3620,170 @@ function createExportMap(width, height) {
                 }
             }
             
+            // Nova função para exportar vídeo usando FFMPEG
+            async function exportVideoWithFFmpeg(width, height, fps, format) {
+                // Verificar se a biblioteca FFmpeg está disponível
+                if (typeof FFmpeg === 'undefined') {
+                    alert("A biblioteca FFmpeg não está disponível. Por favor, verifique sua conexão com a internet e tente novamente.");
+                    statusMessageEl.textContent = "Erro: FFmpeg não está disponível";
+                    return;
+                }
+                
+                // Preparar elementos e variáveis
+                isExporting = true;
+                exportBtn.disabled = true;
+                exportBtn.textContent = 'Preparando FFmpeg...';
+                exportProgressContainer.style.display = 'block';
+                exportProgressBar.style.width = '0%';
+                exportProgressBar.textContent = '0%';
+                
+                // Salvar o tempo atual para restaurar depois
+                const tempCurrentTime = currentTime;
+                
+                // Usar a duração configurada para exportação (fixa para mobile)
+                const exportDuration = isMobile ? mobileDuration : parseInt(videoDurationInput.value);
+                
+                // Obter o atraso entre frames das configurações
+                const frameDelay = parseInt(frameDelayInput.value || 500);
+                
+                try {
+                    // Inicializar FFmpeg
+                    const { createFFmpeg } = FFmpeg;
+                    const ffmpeg = createFFmpeg({
+                        log: true,
+                        progress: ({ ratio }) => {
+                            const percent = Math.floor(ratio * 100);
+                            exportProgressBar.style.width = percent + '%';
+                            exportProgressBar.textContent = percent + '%';
+                            statusMessageEl.textContent = `Processando vídeo com FFmpeg: ${percent}%`;
+                        }
+                    });
+                    
+                    statusMessageEl.textContent = 'Carregando FFmpeg (isso pode levar alguns segundos)...';
+                    await ffmpeg.load();
+                    
+                    // Criar mapa para exportação
+                    statusMessageEl.textContent = 'Preparando mapa para exportação...';
+                    const exportMapData = createExportMap(width, height);
+                    const exportMap = exportMapData.map;
+                    const exportVectorLayer = exportMapData.vectorLayer;
+                    
+                    // Aguardar o mapa renderizar
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    
+                    // Calcular o total de frames
+                    const totalFrames = Math.ceil(exportDuration * fps);
+                    
+                    // Gerar frames e salvá-los no sistema de arquivos do FFmpeg
+                    for (let frameCount = 0; frameCount < totalFrames; frameCount++) {
+                        const frameTime = (frameCount / totalFrames) * exportDuration;
+                        
+                        // Atualizar o progresso
+                        const progress = Math.round((frameCount / totalFrames) * 50); // Primeiros 50%
+                        exportProgressBar.style.width = progress + '%';
+                        exportProgressBar.textContent = `Gerando frame ${frameCount+1}/${totalFrames} (${progress}%)`;
+                        statusMessageEl.textContent = `Gerando frame ${frameCount+1} de ${totalFrames} (${progress}%)`;
+                        
+                        // Atualizar o mapa para o tempo atual
+                        updateExportMapForFrame(exportMap, exportVectorLayer, frameTime, exportDuration);
+                        
+                        // Aguardar carregamento dos tiles
+                        await waitForTilesToLoad(exportMap);
+                        
+                        // Espera adicional para garantir renderização completa
+                        await new Promise(resolve => setTimeout(resolve, frameDelay));
+                        
+                        // Capturar o frame 
+                        const canvas = await html2canvas(exportMap.getViewport(), {
+                            width: width,
+                            height: height,
+                            useCORS: true,
+                            allowTaint: true,
+                            backgroundColor: '#FFFFFF',
+                            imageTimeout: parseInt(tileLoadTimeoutInput.value),
+                            scale: 1
+                        });
+                        
+                        // Converter para blob
+                        const blob = await new Promise(resolve => {
+                            canvas.toBlob(resolve, 'image/png', 1.0);
+                        });
+                        
+                        // Converter blob para ArrayBuffer
+                        const arrayBuffer = await blob.arrayBuffer();
+                        const uint8Array = new Uint8Array(arrayBuffer);
+                        
+                        // Salvar o frame no sistema de arquivos do FFmpeg
+                        const frameName = `frame_${frameCount.toString().padStart(5, '0')}.png`;
+                        ffmpeg.FS('writeFile', frameName, uint8Array);
+                    }
+                    
+                    // Gerar vídeo MP4 usando FFmpeg
+                    statusMessageEl.textContent = 'Gerando vídeo MP4 com FFmpeg...';
+                    
+                    // Executar o comando FFmpeg para criar o vídeo MP4
+                    await ffmpeg.run(
+                        '-framerate', `${fps}`,
+                        '-i', 'frame_%05d.png',
+                        '-c:v', 'libx264',
+                        '-profile:v', 'main',
+                        '-pix_fmt', 'yuv420p',
+                        '-crf', '23',
+                        '-preset', 'medium',
+                        '-r', `${fps}`,
+                        'output.mp4'
+                    );
+                    
+                    // Ler o arquivo de saída do sistema de arquivos do FFmpeg
+                    statusMessageEl.textContent = 'Finalizando o vídeo...';
+                    const data = ffmpeg.FS('readFile', 'output.mp4');
+                    
+                    // Criar blob e URL para download
+                    const videoBlob = new Blob([data.buffer], { type: 'video/mp4' });
+                    const url = URL.createObjectURL(videoBlob);
+                    
+                    // Fazer o download
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'mapa-animacao.mp4';
+                    document.body.appendChild(a);
+                    a.click();
+                    
+                    // Limpar recursos
+                    setTimeout(() => {
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                    }, 100);
+                    
+                    // Remover arquivos temporários do sistema de arquivos do FFmpeg
+                    for (let frameCount = 0; frameCount < totalFrames; frameCount++) {
+                        const frameName = `frame_${frameCount.toString().padStart(5, '0')}.png`;
+                        ffmpeg.FS('unlink', frameName);
+                    }
+                    ffmpeg.FS('unlink', 'output.mp4');
+                    
+                    // Atualizar interface
+                    exportProgressBar.style.width = '100%';
+                    exportProgressBar.textContent = 'Concluído!';
+                    statusMessageEl.textContent = 'Vídeo MP4 exportado com sucesso!';
+                    
+                } catch (error) {
+                    console.error('Erro na exportação com FFmpeg:', error);
+                    statusMessageEl.textContent = 'Erro na exportação: ' + error.message;
+                } finally {
+                    // Limpar o container de exportação
+                    exportContainer.innerHTML = '';
+                    
+                    // Restaurar interface
+                    isExporting = false;
+                    exportBtn.disabled = false;
+                    exportBtn.textContent = 'Exportar Vídeo';
+                    
+                    // Voltar ao tempo original
+                    setCurrentTime(tempCurrentTime);
+                }
+            }
+            
             // Função para exportar - ponto de entrada principal
             exportBtn.addEventListener('click', function() {
                 if (isExporting) return;
@@ -3664,6 +3838,8 @@ function createExportMap(width, height) {
                 // Verificar o formato escolhido e iniciar a exportação adequada
                 if (format === 'frames') {
                     exportFramesAsZip(width, height, fps);
+                } else if (format === 'mp4') {
+                    exportVideoWithFFmpeg(width, height, fps, format);
                 } else {
                     exportVideoWithHtml2Canvas(width, height, fps, format);
                 }
@@ -4191,55 +4367,6 @@ function createExportMap(width, height) {
 
     if (progress) progress.style.display = 'none';
   }
-</script>
-
-
-<!-- Adiciona ffmpeg.wasm apenas se for Safari/Mac/iOS -->
-<script>
-    function isSafariOrIOS() {
-        const ua = navigator.userAgent;
-        return /Safari/.test(ua) && !/Chrome/.test(ua) || /iPhone|iPad|iPod/.test(ua);
-    }
-
-    if (isSafariOrIOS()) {
-        const ffmpegScript = document.createElement('script');
-        ffmpegScript.src = "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.6/dist/ffmpeg.min.js";
-        ffmpegScript.onload = () => console.log("FFmpeg wasm carregado para Safari/iOS");
-        document.head.appendChild(ffmpegScript);
-    }
-</script>
-
-<script>
-    async function exportarComFFmpeg(frames, fps = 24) {
-        if (!isSafariOrIOS()) return;
-
-        const { createFFmpeg, fetchFile } = FFmpeg;
-        const ffmpeg = createFFmpeg({ log: true });
-        await ffmpeg.load();
-
-        for (let i = 0; i < frames.length; i++) {
-            const imgBlob = await fetch(frames[i]).then(r => r.blob());
-            const imgBuffer = await imgBlob.arrayBuffer();
-            ffmpeg.FS('writeFile', `frame${i}.jpg`, new Uint8Array(imgBuffer));
-        }
-
-        await ffmpeg.run(
-            '-framerate', fps.toString(),
-            '-i', 'frame%d.jpg',
-            '-c:v', 'libx264',
-            '-pix_fmt', 'yuv420p',
-            'output.mp4'
-        );
-
-        const data = ffmpeg.FS('readFile', 'output.mp4');
-        const videoBlob = new Blob([data.buffer], { type: 'video/mp4' });
-        const url = URL.createObjectURL(videoBlob);
-
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'video.mp4';
-        a.click();
-    }
 </script>
 
 </body>
