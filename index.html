@@ -590,6 +590,19 @@
             border: 1px solid #cce0ff;
             border-radius: var(--border-radius);
         }
+        
+        /* Mensagem para dispositivos Apple */
+        .apple-notice {
+            display: none;
+            background-color: #eafaf1;
+            color: #27ae60;
+            padding: 10px;
+            border-radius: var(--border-radius);
+            margin-bottom: 15px;
+            font-size: 14px;
+            text-align: center;
+            border-left: 4px solid #2ecc71;
+        }
     
         /* Responsividade */
         @media (max-width: 768px) {
@@ -777,7 +790,11 @@
                     <div class="export-container">
                         <h3>Exportar Animação</h3>
                         <div id="mobile-export-notice" class="mobile-notice">
-                            Em dispositivos móveis, o vídeo é limitado a 13 segundos e 24 FPS para melhor desempenho. Use webm.
+                            Em dispositivos móveis, o vídeo é limitado a 13 segundos e 24 FPS para melhor desempenho.
+                        </div>
+                        
+                        <div id="apple-export-notice" class="apple-notice">
+                            Em dispositivos Apple, a exportação está disponível apenas em formato ZIP (sequência de imagens JPEG).
                         </div>
                         
                         <!-- Configurações Mobile -->
@@ -809,7 +826,7 @@
                                     <option value="60">60 FPS</option>
                                 </select>
                             </div>
-                            <div class="property-row">
+                            <div class="property-row" id="format-selection-row">
                                 <label for="video-format">Formato:</label>
                                 <select id="video-format">
                                     <option value="webm" selected>WebM</option>
@@ -821,6 +838,13 @@
                             <div class="property-row desktop-only">
                                 <label for="video-duration">Duração (s):</label>
                                 <input type="number" id="video-duration" min="5" max="60" step="1" value="15">
+                            </div>
+                            
+                            <!-- Qualidade JPEG para exportação -->
+                            <div class="property-row">
+                                <label for="jpeg-quality">Qualidade JPEG:</label>
+                                <input type="range" id="jpeg-quality" min="0.1" max="1.0" step="0.1" value="0.9">
+                                <span id="jpeg-quality-value">90%</span>
                             </div>
                             
                             <!-- Opção de atraso entre frames disponível para todos os dispositivos -->
@@ -1058,28 +1082,56 @@
     <!-- HTML2Canvas para exportação de vídeo -->
     <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
     
-    <!-- FFmpeg.wasm para exportação em MP4 -->
-    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js"></script>
-
-   
     <script>
         document.addEventListener('DOMContentLoaded', function() {
             // Detectar se é um dispositivo móvel
             const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || 
                              (window.innerWidth <= 768);
             
-            console.log("Dispositivo móvel detectado:", isMobile);
+            // Detectar se é um dispositivo Apple (Mac ou iOS)
+            const isAppleDevice = /iPad|iPhone|iPod|Macintosh|MacIntel|MacPPC|Mac68K/.test(navigator.userAgent);
+            
+            console.log("Dispositivo móvel:", isMobile);
+            console.log("Dispositivo Apple:", isAppleDevice);
+            
+            // Mostrar aviso específico para dispositivos Apple
+            const appleExportNotice = document.getElementById('apple-export-notice');
+            if (isAppleDevice && appleExportNotice) {
+                appleExportNotice.style.display = 'block';
+            }
+            
+            // Atualizar seleção de formato para Apple (apenas ZIP)
+            const formatSelectionRow = document.getElementById('format-selection-row');
+            const videoFormatSelect = document.getElementById('video-format');
+            
+            if (isAppleDevice && videoFormatSelect) {
+                // Definir o formato para "frames" (ZIP) e desabilitar a seleção
+                videoFormatSelect.value = 'frames';
+                videoFormatSelect.disabled = true;
+                
+                // Opcionalmente, ocultar a linha de seleção de formato
+                if (formatSelectionRow) {
+                    formatSelectionRow.style.display = 'none';
+                }
+            }
+            
+            // Configurar slider de qualidade JPEG
+            const jpegQualitySlider = document.getElementById('jpeg-quality');
+            const jpegQualityValue = document.getElementById('jpeg-quality-value');
+            
+            if (jpegQualitySlider && jpegQualityValue) {
+                jpegQualitySlider.addEventListener('input', function() {
+                    const value = Math.round(this.value * 100);
+                    jpegQualityValue.textContent = value + '%';
+                });
+            }
             
             // Definir parâmetros fixos para dispositivos móveis
-            let mobileDuration = 13;  // 10 segundos
+            let mobileDuration = 13;  // 13 segundos
             let mobileFps = 24;       // 24 fps
             
             // Verificar se JSZip está disponível
             console.log("JSZip disponível:", typeof JSZip !== 'undefined');
-            
-            // Verificar se FFmpeg está disponível
-            console.log("FFmpeg disponível:", typeof FFmpeg !== 'undefined');
             
             // Inicializando variáveis
             let currentTime = 0;
@@ -1124,7 +1176,6 @@
             const exportBtn = document.getElementById('export-btn');
             const videoQualitySelect = document.getElementById('video-quality');
             const videoFpsSelect = document.getElementById('video-fps');
-            const videoFormatSelect = document.getElementById('video-format');
             const videoDurationInput = document.getElementById('video-duration');
             const exportProgressContainer = document.getElementById('export-progress-container');
             const exportProgressBar = document.getElementById('export-progress-bar');
@@ -2817,7 +2868,7 @@ else if (type === 'text') {
                 statusMessageEl.textContent = "Animação pausada.";
             });
             
-           // Função corrigida para criar um mapa de exportação com TODAS as camadas
+           // Função para criar um mapa de exportação com TODAS as camadas
 function createExportMap(width, height) {
     console.log("Criando mapa de exportação...");
     console.log("Tipo de fonte:", mapSourceType);
@@ -3025,6 +3076,9 @@ function createExportMap(width, height) {
                 
                 // Obter o atraso entre frames das configurações
                 const frameDelay = parseInt(frameDelayInput.value || 500);
+                
+                // Obter qualidade JPEG do slider (valor entre 0.1 e 1.0)
+                const jpegQuality = parseFloat(jpegQualitySlider.value || 0.9);
 
                 // Parâmetros da animação
                 const totalFrames = Math.ceil(exportDuration * fps);
@@ -3067,7 +3121,7 @@ function createExportMap(width, height) {
                         // Tempo adicional de espera entre frames (configurável)
                         await new Promise(resolve => setTimeout(resolve, frameDelay));
 
-                        // Capturar o frame com qualidade máxima
+                        // Capturar o frame com qualidade configurada
                         const canvas = await html2canvas(exportMap.getViewport(), {
                             width: width,
                             height: height,
@@ -3078,13 +3132,13 @@ function createExportMap(width, height) {
                             scale: 1, // Escala 1:1 para melhor qualidade
                         });
 
-                        // Converter canvas para blob com qualidade máxima
+                        // Converter canvas para blob usando JPEG com qualidade configurada
                         const blob = await new Promise(resolve => {
-                            canvas.toBlob(resolve, 'image/png', 1.0); // Qualidade 1.0 (máxima)
+                            canvas.toBlob(resolve, 'image/jpeg', jpegQuality); // Usar qualidade JPEG configurada
                         });
 
                         // Adicionar ao ZIP
-                        const frameName = `frame_${frameCount.toString().padStart(5, '0')}.png`;
+                        const frameName = `frame_${frameCount.toString().padStart(5, '0')}.jpg`; // Usar .jpg em vez de .png
                         framesFolder.file(frameName, blob);
                     }
 
@@ -3454,6 +3508,9 @@ function createExportMap(width, height) {
                 // Obter o atraso entre frames das configurações
                 const frameDelay = parseInt(frameDelayInput.value || 500);
                 
+                // Obter qualidade JPEG do slider
+                const jpegQuality = parseFloat(jpegQualitySlider.value || 0.9);
+                
                 try {
                     // Status inicial
                     statusMessageEl.textContent = 'Preparando para gravação...';
@@ -3506,8 +3563,9 @@ function createExportMap(width, height) {
                             scale: 1 // Escala 1:1 para melhor qualidade
                         });
                         
-                        // Adicionar o frame ao array
-                        frames.push(canvas);
+                        // Adicionar o frame ao array (usar JPEG ao invés de PNG)
+                        const jpegDataUrl = canvas.toDataURL('image/jpeg', jpegQuality);
+                        frames.push(jpegDataUrl);
                     }
                     
                     // Agora criar um vídeo a partir dos frames
@@ -3591,9 +3649,15 @@ function createExportMap(width, height) {
                         exportProgressBar.textContent = `Codificando vídeo ${i+1}/${frames.length} (${progress}%)`;
                         statusMessageEl.textContent = `Codificando vídeo ${i+1} de ${frames.length} (${progress}%)`;
                         
-                        // Desenhar o frame atual com alta qualidade
+                        // Desenhar o frame atual
+                        const img = new Image();
+                        await new Promise(resolve => {
+                            img.onload = resolve;
+                            img.src = frames[i];
+                        });
+                        
                         outputCtx.clearRect(0, 0, width, height);
-                        outputCtx.drawImage(frames[i], 0, 0, width, height);
+                        outputCtx.drawImage(img, 0, 0, width, height);
                         
                         // Esperar o tempo correto para o próximo frame para manter a duração correta
                         // Use no mínimo 16ms (aproximadamente 60 FPS) para evitar problemas
@@ -3620,174 +3684,58 @@ function createExportMap(width, height) {
                 }
             }
             
-            // Nova função para exportar vídeo usando FFMPEG
-            async function exportVideoWithFFmpeg(width, height, fps, format) {
-                // Verificar se a biblioteca FFmpeg está disponível
-                if (typeof FFmpeg === 'undefined') {
-                    alert("A biblioteca FFmpeg não está disponível. Por favor, verifique sua conexão com a internet e tente novamente.");
-                    statusMessageEl.textContent = "Erro: FFmpeg não está disponível";
-                    return;
-                }
-                
-                // Preparar elementos e variáveis
-                isExporting = true;
-                exportBtn.disabled = true;
-                exportBtn.textContent = 'Preparando FFmpeg...';
-                exportProgressContainer.style.display = 'block';
-                exportProgressBar.style.width = '0%';
-                exportProgressBar.textContent = '0%';
-                
-                // Salvar o tempo atual para restaurar depois
-                const tempCurrentTime = currentTime;
-                
-                // Usar a duração configurada para exportação (fixa para mobile)
-                const exportDuration = isMobile ? mobileDuration : parseInt(videoDurationInput.value);
-                
-                // Obter o atraso entre frames das configurações
-                const frameDelay = parseInt(frameDelayInput.value || 500);
-                
-                try {
-                    // Inicializar FFmpeg
-                    const { createFFmpeg } = FFmpeg;
-                    const ffmpeg = createFFmpeg({
-                        log: true,
-                        progress: ({ ratio }) => {
-                            const percent = Math.floor(ratio * 100);
-                            exportProgressBar.style.width = percent + '%';
-                            exportProgressBar.textContent = percent + '%';
-                            statusMessageEl.textContent = `Processando vídeo com FFmpeg: ${percent}%`;
-                        }
-                    });
-                    
-                    statusMessageEl.textContent = 'Carregando FFmpeg (isso pode levar alguns segundos)...';
-                    await ffmpeg.load();
-                    
-                    // Criar mapa para exportação
-                    statusMessageEl.textContent = 'Preparando mapa para exportação...';
-                    const exportMapData = createExportMap(width, height);
-                    const exportMap = exportMapData.map;
-                    const exportVectorLayer = exportMapData.vectorLayer;
-                    
-                    // Aguardar o mapa renderizar
-                    await new Promise(resolve => setTimeout(resolve, 2000));
-                    
-                    // Calcular o total de frames
-                    const totalFrames = Math.ceil(exportDuration * fps);
-                    
-                    // Gerar frames e salvá-los no sistema de arquivos do FFmpeg
-                    for (let frameCount = 0; frameCount < totalFrames; frameCount++) {
-                        const frameTime = (frameCount / totalFrames) * exportDuration;
-                        
-                        // Atualizar o progresso
-                        const progress = Math.round((frameCount / totalFrames) * 50); // Primeiros 50%
-                        exportProgressBar.style.width = progress + '%';
-                        exportProgressBar.textContent = `Gerando frame ${frameCount+1}/${totalFrames} (${progress}%)`;
-                        statusMessageEl.textContent = `Gerando frame ${frameCount+1} de ${totalFrames} (${progress}%)`;
-                        
-                        // Atualizar o mapa para o tempo atual
-                        updateExportMapForFrame(exportMap, exportVectorLayer, frameTime, exportDuration);
-                        
-                        // Aguardar carregamento dos tiles
-                        await waitForTilesToLoad(exportMap);
-                        
-                        // Espera adicional para garantir renderização completa
-                        await new Promise(resolve => setTimeout(resolve, frameDelay));
-                        
-                        // Capturar o frame 
-                        const canvas = await html2canvas(exportMap.getViewport(), {
-                            width: width,
-                            height: height,
-                            useCORS: true,
-                            allowTaint: true,
-                            backgroundColor: '#FFFFFF',
-                            imageTimeout: parseInt(tileLoadTimeoutInput.value),
-                            scale: 1
-                        });
-                        
-                        // Converter para blob
-                        const blob = await new Promise(resolve => {
-                            canvas.toBlob(resolve, 'image/png', 1.0);
-                        });
-                        
-                        // Converter blob para ArrayBuffer
-                        const arrayBuffer = await blob.arrayBuffer();
-                        const uint8Array = new Uint8Array(arrayBuffer);
-                        
-                        // Salvar o frame no sistema de arquivos do FFmpeg
-                        const frameName = `frame_${frameCount.toString().padStart(5, '0')}.png`;
-                        ffmpeg.FS('writeFile', frameName, uint8Array);
-                    }
-                    
-                    // Gerar vídeo MP4 usando FFmpeg
-                    statusMessageEl.textContent = 'Gerando vídeo MP4 com FFmpeg...';
-                    
-                    // Executar o comando FFmpeg para criar o vídeo MP4
-                    await ffmpeg.run(
-                        '-framerate', `${fps}`,
-                        '-i', 'frame_%05d.png',
-                        '-c:v', 'libx264',
-                        '-profile:v', 'main',
-                        '-pix_fmt', 'yuv420p',
-                        '-crf', '23',
-                        '-preset', 'medium',
-                        '-r', `${fps}`,
-                        'output.mp4'
-                    );
-                    
-                    // Ler o arquivo de saída do sistema de arquivos do FFmpeg
-                    statusMessageEl.textContent = 'Finalizando o vídeo...';
-                    const data = ffmpeg.FS('readFile', 'output.mp4');
-                    
-                    // Criar blob e URL para download
-                    const videoBlob = new Blob([data.buffer], { type: 'video/mp4' });
-                    const url = URL.createObjectURL(videoBlob);
-                    
-                    // Fazer o download
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = 'mapa-animacao.mp4';
-                    document.body.appendChild(a);
-                    a.click();
-                    
-                    // Limpar recursos
-                    setTimeout(() => {
-                        document.body.removeChild(a);
-                        URL.revokeObjectURL(url);
-                    }, 100);
-                    
-                    // Remover arquivos temporários do sistema de arquivos do FFmpeg
-                    for (let frameCount = 0; frameCount < totalFrames; frameCount++) {
-                        const frameName = `frame_${frameCount.toString().padStart(5, '0')}.png`;
-                        ffmpeg.FS('unlink', frameName);
-                    }
-                    ffmpeg.FS('unlink', 'output.mp4');
-                    
-                    // Atualizar interface
-                    exportProgressBar.style.width = '100%';
-                    exportProgressBar.textContent = 'Concluído!';
-                    statusMessageEl.textContent = 'Vídeo MP4 exportado com sucesso!';
-                    
-                } catch (error) {
-                    console.error('Erro na exportação com FFmpeg:', error);
-                    statusMessageEl.textContent = 'Erro na exportação: ' + error.message;
-                } finally {
-                    // Limpar o container de exportação
-                    exportContainer.innerHTML = '';
-                    
-                    // Restaurar interface
-                    isExporting = false;
-                    exportBtn.disabled = false;
-                    exportBtn.textContent = 'Exportar Vídeo';
-                    
-                    // Voltar ao tempo original
-                    setCurrentTime(tempCurrentTime);
-                }
-            }
-            
             // Função para exportar - ponto de entrada principal
             exportBtn.addEventListener('click', function() {
                 if (isExporting) return;
                 
+                // Para dispositivos Apple, forçar a exportação como ZIP
+                if (isAppleDevice) {
+                    // Configurações de qualidade para dispositivos Apple
+                    let quality = isMobile ? 
+                        (mobileVideoQualitySelect ? mobileVideoQualitySelect.value : "low") : 
+                        videoQualitySelect.value;
+                    
+                    let fps = isMobile ? mobileFps : parseInt(videoFpsSelect.value);
+                    
+                    // Configurações de dimensão baseadas na qualidade
+                    let width, height;
+                    
+                    if (isMobile) {
+                        // Dimensões para dispositivos móveis
+                        if (quality === "verylow") {
+                            width = 854;
+                            height = 480;
+                        } else {
+                            // Low (720p)
+                            width = 1280;
+                            height = 720;
+                        }
+                    } else {
+                        // Desktop usa as configurações padrão
+                        switch(quality) {
+                            case 'low':
+                                width = 1280;
+                                height = 720;
+                                break;
+                            case 'medium':
+                                width = 1920;
+                                height = 1080;
+                                break;
+                            case 'high':
+                                width = 2560;
+                                height = 1440;
+                                break;
+                            default:
+                                width = 1920;
+                                height = 1080;
+                        }
+                    }
+                    
+                    exportFramesAsZip(width, height, fps);
+                    return;
+                }
+                
+                // Para outros dispositivos, usar as configurações normais
                 // Configurações de qualidade, FPS e duração - Ajustadas para mobile se necessário
                 let quality, fps, format;
                 
@@ -3839,7 +3787,8 @@ function createExportMap(width, height) {
                 if (format === 'frames') {
                     exportFramesAsZip(width, height, fps);
                 } else if (format === 'mp4') {
-                    exportVideoWithFFmpeg(width, height, fps, format);
+                    // Para MP4, usar o MediaRecorder que é mais compatível que o FFmpeg
+                    exportVideoWithHtml2Canvas(width, height, fps, 'webm');
                 } else {
                     exportVideoWithHtml2Canvas(width, height, fps, format);
                 }
